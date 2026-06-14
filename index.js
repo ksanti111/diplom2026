@@ -280,4 +280,4 @@ app.listen(PORT, () => {
     console.log(`🚀 Сервер: http://localhost:${PORT}`);
     console.log(`💡 СВЕЖИЙ ТОКЕН для КАЖДОГО запроса`);
     console.log('═'.repeat(60));
-}); 
+});
