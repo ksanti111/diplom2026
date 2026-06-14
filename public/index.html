@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📸 AI Concept Studio</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            background: radial-gradient(circle at 30% 30%, #e8e8e8 0%, #888888 70%, #555555 100%);
+            min-height: 100vh;
+            padding: 30px 0;
+            font-family: 'Segoe UI', sans-serif;
+        }
+        .main-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(240,240,245,0.95) 100%);
+            backdrop-filter: blur(15px);
+            border-radius: 30px;
+            padding: 35px;
+            max-width: 1500px;
+            margin: 0 auto;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.2);
+        }
+        h1 { color: #2d3748; font-weight: 800; text-align: center; }
+        .moodboard-img {
+            width: 100%;
+            border-radius: 20px;
+            max-height: 100%;
+            object-fit: cover;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.2);
+        }
+        .btn-generate {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            font-weight: 700;
+            padding: 18px;
+            border-radius: 20px;
+            font-size: 1.2rem;
+            width: 100%;
+            cursor: pointer;
+        }
+        .btn-random {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            border: none;
+            color: white;
+            font-weight: 700;
+            padding: 14px;
+            border-radius: 20px;
+            font-size: 1.1rem;
+            width: 100%;
+            cursor: pointer;
+            margin-bottom: 15px;
+        }
+        .btn-generate:disabled, .btn-random:disabled { opacity: 0.6; cursor: not-allowed; }
+        .form-select, .form-control {
+            padding: 14px 18px;
+            border-radius: 16px;
+            border: 2px solid rgba(102, 126, 234, 0.2);
+            font-size: 1rem;
+            background: white;
+            margin-bottom: 15px;
+        }
+        .advice-box {
+            background: linear-gradient(135deg, rgba(255,255,255,0.85) 0%, rgba(245,245,250,0.85) 100%);
+            padding: 25px;
+            border-radius: 20px;
+            margin-top: 25px;
+            border-left: 6px solid #667eea;
+        }
+        .status-badge {
+            padding: 10px 20px;
+            border-radius: 40px;
+            font-weight: 600;
+            background: #e2e8f0;
+        }
+        .info-row {
+            background: rgba(255,255,255,0.5);
+            padding: 12px 18px;
+            border-radius: 14px;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="main-card">
+            <h1 class="display-4 mb-4">📸 AI Concept Studio</h1>
+
+            <div class="row g-4">
+                <div class="col-lg-5">
+                    <h4>📋 Параметры</h4>
+                    
+                    <button class="btn-random" id="randomBtn">🎲 Случайная концепция</button>
+                    
+                    <label>🎭 Стиль</label>
+                    <select class="form-select" id="moodSelect">
+                        <option value="Драма">🎭 Драма</option>
+                        <option value="Минимализм">🤍 Минимализм</option>
+                        <option value="Уютный">🕯️ Уютный</option>
+                        <option value="Киберпанк">🤖 Киберпанк</option>
+                        <option value="Винтаж">📻 Винтаж</option>
+                        <option value="Бизнес">💼 Бизнес</option>
+                        <option value="Гламур">👠 Гламур</option>
+                        <option value="Ретро">📼 Ретро</option>
+                        <option value="Готика">🦇 Готика</option>
+                        <option value="Бохо">🌸 Бохо</option>
+                        <option value="custom">✨ Свой...</option>
+                    </select>
+                    <input type="text" class="form-control d-none" id="customMood" placeholder="Опишите свой стиль...">
+
+                    <label>📍 Локация</label>
+                    <select class="form-select" id="locationSelect">
+                        <option value="Осенний парк">🍂 Осенний парк</option>
+                        <option value="Заснеженный лес">❄️ Заснеженный лес</option>
+                        <option value="Ночной мегаполис">🌃 Ночной мегаполис</option>
+                        <option value="Уютное кафе">☕ Уютное кафе</option>
+                        <option value="Старинная библиотека">📚 Библиотека</option>
+                        <option value="Тропический пляж">🏝 Пляж</option>
+                        <option value="Горное озеро">🏔 Горное озеро</option>
+                        <option value="Лавандовое поле">🌸 Лавандовое поле</option>
+                        <option value="Заброшенный завод">🏭 Заброшенный завод</option>
+                        <option value="custom">✨ Своя...</option>
+                    </select>
+                    <input type="text" class="form-control d-none" id="customLocation" placeholder="Опишите свою локацию...">
+
+                    <label>🎨 Палитра</label>
+                    <select class="form-select" id="paletteSelect">
+                        <option value="Теплая">🌅 Теплая</option>
+                        <option value="Холодная">❄️ Холодная</option>
+                        <option value="Пастельная">🎀 Пастельная</option>
+                        <option value="Черно-белая">🖤 Черно-белая</option>
+                        <option value="Неоновая">💜 Неоновая</option>
+                        <option value="Землистая">🍂 Землистая</option>
+                        <option value="custom">✨ Своя...</option>
+                    </select>
+                    <input type="text" class="form-control d-none" id="customPalette" placeholder="Опишите свою палитру...">
+
+                    <label>👤 Пол</label>
+                    <select class="form-select" id="genderSelect">
+                        <option value="female">👩 Девушка</option>
+                        <option value="male">👨 Парень</option>
+                    </select>
+
+                    <label>📦 Реквизит</label>
+                    <input type="text" class="form-control" id="propsInput" placeholder="книга, свечи, зонт...">
+
+                    <button class="btn-generate" id="generateBtn">🚀 Сгенерировать</button>
+                </div>
+
+                <div class="col-lg-7">
+                    <div class="d-flex justify-content-between mb-3">
+                        <h4>🎨 Результат</h4>
+                        <span class="status-badge" id="statusBadge">Ожидание</span>
+                    </div>
+
+                    <div id="loadingBlock" class="text-center py-5 d-none">
+                        <div class="spinner-border" style="color:#667eea"></div>
+                        <p class="mt-3">Генерация...</p>
+                    </div>
+
+                    <img id="resultImage" src="https://placehold.co/800x600/e2e8f0/667eea?text=Выберите+параметры" class="moodboard-img mb-4">
+
+                    <div class="advice-box">
+                        <h5>📸 Техзадание</h5>
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="info-row"><strong>Стиль:</strong> <span id="displayMood">—</span></div>
+                                <div class="info-row"><strong>Локация:</strong> <span id="displayLocation">—</span></div>
+                                <div class="info-row"><strong>Палитра:</strong> <span id="displayPalette">—</span></div>
+                                <div class="info-row"><strong>Пол:</strong> <span id="displayGender">—</span></div>
+                            </div>
+                            <div class="col-6">
+                                <div class="info-row"><strong>Свет:</strong> <span id="displayLight">—</span></div>
+                                <div class="info-row"><strong>Объектив:</strong> <span id="displayLens">—</span></div>
+                                <div class="info-row"><strong>Источник:</strong> <span id="displayProvider">—</span></div>
+                            </div>
+                        </div>
+
+                        <div class="info-row mt-3"><strong>👗 Образ:</strong> <span id="displayOutfit">—</span></div>
+                        <div class="info-row"><strong>📦 Реквизит:</strong> <span id="displayProps">—</span></div>
+
+                        <hr>
+                        <div class="info-row"><strong>💡 Совет:</strong> <span id="displayAdvice">—</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleCustom(select, inputId) {
+            document.getElementById(inputId).classList.toggle('d-none', select.value !== 'custom');
+        }
+
+        // База образов
+        const OUTFITS = {
+            female: {
+                'Драма': 'длинное пальто oversize, кожаные сапоги, темные очки',
+                'Минимализм': 'белая рубашка, прямые брюки, минималистичные украшения',
+                'Уютный': 'свитер крупной вязки, джинсы, теплый шарф',
+                'Киберпанк': 'кожаная куртка, неоновые акценты, массивные ботинки',
+                'Винтаж': 'платье А-силуэта, жемчуг, туфли на каблуке',
+                'Бизнес': 'брючный костюм, шелковая блуза, лодочки',
+                'Гламур': 'вечернее платье с блестками, клатч, шпильки',
+                'Ретро': 'джинсы клеш, яркий топ, платформа',
+                'Готика': 'черное кружевное платье, корсет, массивные украшения',
+                'Бохо': 'свободное платье с принтом, замшевые сапоги, этнические украшения',
+                'default': 'стильный образ в выбранной цветовой гамме'
+            },
+            male: {
+                'Драма': 'длинное пальто, водолазка, классические ботинки',
+                'Минимализм': 'белая футболка, черные брюки, кеды',
+                'Уютный': 'свитер крупной вязки, чиносы, ботинки',
+                'Киберпанк': 'кожаная куртка, джоггеры, высокие кроссовки',
+                'Винтаж': 'твидовый пиджак, рубашка, броги',
+                'Бизнес': 'костюм, рубашка, галстук, оксфорды',
+                'Гламур': 'дизайнерский костюм, водолазка, лоферы',
+                'Ретро': 'кожаная куртка, джинсы, ботинки',
+                'Готика': 'черное пальто, темные джинсы, ботинки',
+                'Бохо': 'льняная рубашка, жилет, замшевые ботинки',
+                'default': 'стильный мужской образ'
+            }
+        };
+
+        const LIGHT = {
+            'Драма': 'Контровой свет + жесткие тени',
+            'Минимализм': 'Мягкий рассеянный свет',
+            'Уютный': 'Теплый ламповый свет',
+            'Киберпанк': 'Неоновая заливка',
+            'Винтаж': 'Теплый свет ламп накаливания',
+            'Бизнес': 'Плоский заполняющий свет',
+            'Гламур': 'Студийный свет с софтбоксами',
+            'Ретро': 'Естественный свет с легким виньетированием',
+            'Готика': 'Драматичный контровой свет',
+            'Бохо': 'Золотой час, мягкие тени'
+        };
+
+        const LENS = {
+            'Драма': '35mm f/1.4',
+            'Минимализм': '50mm f/1.8',
+            'Уютный': '85mm f/1.8',
+            'Киберпанк': '24mm f/1.4',
+            'Винтаж': '50mm f/1.4',
+            'Бизнес': '70-200mm f/2.8',
+            'Гламур': '85mm f/1.2',
+            'Ретро': '35mm f/2.0',
+            'Готика': '50mm f/1.4',
+            'Бохо': '35mm f/1.8'
+        };
+
+        const ADVICE = {
+            'Драма': 'Снимайте с нижнего ракурса, добавьте дым',
+            'Минимализм': 'Следите за геометрией кадра',
+            'Уютный': 'Используйте теплый свет, добавьте плед',
+            'Киберпанк': 'Ищите отражения в лужах и витринах',
+            'Винтаж': 'Добавьте зернистость при постобработке',
+            'Бизнес': 'Уверенная поза, прямой взгляд',
+            'Гламур': 'Динамичные позы, работа с ветром',
+            'Ретро': 'Используйте винтажные фильтры',
+            'Готика': 'Драматичные тени, темные тона',
+            'Бохо': 'Естественные позы, волосы на ветру'
+        };
+
+        function getValue(select, customInput) {
+            return select.value === 'custom' ? (customInput.value || 'уникальный') : select.value;
+        }
+
+        function getOutfit(mood, gender) {
+            const genderData = OUTFITS[gender] || OUTFITS.female;
+            return genderData[mood] || genderData['default'] || 'стильный образ';
+        }
+
+        // Рандомная генерация
+        function randomConcept() {
+            const moodSelect = document.getElementById('moodSelect');
+            const locationSelect = document.getElementById('locationSelect');
+            const paletteSelect = document.getElementById('paletteSelect');
+            const genderSelect = document.getElementById('genderSelect');
+            
+            const moodOptions = Array.from(moodSelect.options).filter(o => o.value !== 'custom');
+            const locationOptions = Array.from(locationSelect.options).filter(o => o.value !== 'custom');
+            const paletteOptions = Array.from(paletteSelect.options).filter(o => o.value !== 'custom');
+            
+            moodSelect.value = moodOptions[Math.floor(Math.random() * moodOptions.length)].value;
+            locationSelect.value = locationOptions[Math.floor(Math.random() * locationOptions.length)].value;
+            paletteSelect.value = paletteOptions[Math.floor(Math.random() * paletteOptions.length)].value;
+            genderSelect.value = Math.random() > 0.5 ? 'female' : 'male';
+            
+            // Скрываем custom поля
+            document.getElementById('customMood').classList.add('d-none');
+            document.getElementById('customLocation').classList.add('d-none');
+            document.getElementById('customPalette').classList.add('d-none');
+        }
+
+        const moodSelect = document.getElementById('moodSelect');
+        const locationSelect = document.getElementById('locationSelect');
+        const paletteSelect = document.getElementById('paletteSelect');
+        const genderSelect = document.getElementById('genderSelect');
+        const customMood = document.getElementById('customMood');
+        const customLocation = document.getElementById('customLocation');
+        const customPalette = document.getElementById('customPalette');
+        const propsInput = document.getElementById('propsInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const randomBtn = document.getElementById('randomBtn');
+        const loadingBlock = document.getElementById('loadingBlock');
+        const statusBadge = document.getElementById('statusBadge');
+        const resultImage = document.getElementById('resultImage');
+
+        moodSelect.addEventListener('change', () => toggleCustom(moodSelect, 'customMood'));
+        locationSelect.addEventListener('change', () => toggleCustom(locationSelect, 'customLocation'));
+        paletteSelect.addEventListener('change', () => toggleCustom(paletteSelect, 'customPalette'));
+        
+        randomBtn.addEventListener('click', randomConcept);
+
+        async function generate() {
+            const mood = getValue(moodSelect, customMood);
+            const location = getValue(locationSelect, customLocation);
+            const palette = getValue(paletteSelect, customPalette);
+            const gender = genderSelect.value;
+            const props = propsInput.value || 'без реквизита';
+            const model = gender === 'female' ? 'beautiful woman' : 'handsome man';
+            const outfit = getOutfit(mood, gender);
+
+            document.getElementById('displayMood').textContent = mood;
+            document.getElementById('displayLocation').textContent = location;
+            document.getElementById('displayPalette').textContent = palette;
+            document.getElementById('displayGender').textContent = gender === 'female' ? '👩 Девушка' : '👨 Парень';
+            document.getElementById('displayLight').textContent = LIGHT[mood] || 'Естественный свет';
+            document.getElementById('displayLens').textContent = LENS[mood] || '50mm f/1.8';
+            document.getElementById('displayOutfit').textContent = outfit;
+            document.getElementById('displayProps').textContent = props;
+            document.getElementById('displayAdvice').textContent = ADVICE[mood] || 'Следуйте свету и композиции';
+
+            loadingBlock.classList.remove('d-none');
+            generateBtn.disabled = true;
+            randomBtn.disabled = true;
+            statusBadge.textContent = 'Генерация...';
+
+            try {
+                const prompt = `Lifestyle photography, ${model} wearing ${outfit}, ${mood} style, location: ${location}, ${palette} color palette, props: ${props}, professional photoshoot, 4k, photorealistic`;
+                
+                const res = await fetch('/api/generate-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    resultImage.src = data.image;
+                    document.getElementById('displayProvider').textContent = data.provider;
+                    statusBadge.textContent = '✅ Готово';
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (err) {
+                alert('Ошибка: ' + err.message);
+                statusBadge.textContent = '❌ Ошибка';
+            } finally {
+                loadingBlock.classList.add('d-none');
+                generateBtn.disabled = false;
+                randomBtn.disabled = false;
+            }
+        }
+
+        generateBtn.addEventListener('click', generate);
+    </script>
+</body>
+</html>
