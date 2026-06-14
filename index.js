@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
-const http = require('http');
 const path = require('path');
 
 const app = express();
@@ -19,8 +18,7 @@ let requestCounter = 0;
 
 // ========== ВСЕГДА ПОЛУЧАЕМ СВЕЖИЙ ТОКЕН ==========
 async function getFreshToken(requestId) {
-    console.log(`\n[${requestId}] 🔑 Запрос СВЕЖЕГО токена (игнорируем кэш)...`);
-    console.log(`[${requestId}] 📡 POST ngw.devices.sberbank.ru:9443/api/v2/oauth`);
+    console.log(`\n[${requestId}] 🔑 Запрос СВЕЖЕГО токена...`);
     
     return new Promise((resolve, reject) => {
         const postData = 'scope=GIGACHAT_API_PERS';
@@ -40,27 +38,16 @@ async function getFreshToken(requestId) {
             }
         };
 
-        const reqStart = Date.now();
-        
         const req = https.request(options, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                const elapsed = Date.now() - reqStart;
-                console.log(`[${requestId}] 📨 Ответ OAuth: ${res.statusCode} (${elapsed}ms)`);
-                
                 try {
                     const json = JSON.parse(data);
-                    
                     if (json.access_token) {
-                        console.log(`[${requestId}] ✅ СВЕЖИЙ токен получен!`);
-                        console.log(`[${requestId}] ⏰ Истекает: ${new Date(json.expires_at).toLocaleTimeString()}`);
-                        
-                        // ВАЖНО: ждем 2 секунды перед использованием свежего токена
-                        console.log(`[${requestId}] ⏳ Ожидание 2 сек для активации токена...`);
+                        console.log(`[${requestId}] ✅ Токен получен`);
                         setTimeout(() => resolve(json.access_token), 2000);
                     } else {
-                        console.error(`[${requestId}] ❌ Ошибка OAuth:`, json);
                         reject(new Error(`OAuth error: ${JSON.stringify(json)}`));
                     }
                 } catch (e) {
@@ -75,10 +62,9 @@ async function getFreshToken(requestId) {
     });
 }
 
-// ========== ГЕНЕРАЦИЯ ==========
+// ========== ГЕНЕРАЦИЯ ЧЕРЕЗ KANDINSKY ==========
 async function generateImage(prompt, token, requestId) {
-    console.log(`\n[${requestId}] 🎨 Отправка запроса на генерацию...`);
-    console.log(`[${requestId}] 📝 Промпт (${prompt.length} символов): ${prompt.substring(0, 80)}...`);
+    console.log(`\n[${requestId}] 🎨 Kandinsky: ${prompt.substring(0, 80)}...`);
     
     return new Promise((resolve, reject) => {
         const requestBody = JSON.stringify({
@@ -99,46 +85,30 @@ async function generateImage(prompt, token, requestId) {
             }
         };
 
-        const reqStart = Date.now();
-        
         const req = https.request(options, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                const elapsed = ((Date.now() - reqStart) / 1000).toFixed(1);
-                console.log(`[${requestId}] 📨 Ответ генерации: ${res.statusCode} (${elapsed} сек)`);
-                
                 if (res.statusCode !== 200) {
-                    console.log(`[${requestId}] 📄 Тело ошибки:`, data.substring(0, 200));
-                    reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                    reject(new Error(`HTTP ${res.statusCode}`));
                     return;
                 }
                 
                 try {
                     const json = JSON.parse(data);
-                    
-                    if (json.error) {
-                        reject(new Error(`API Error: ${JSON.stringify(json.error)}`));
-                        return;
-                    }
-                    
                     const content = json.choices?.[0]?.message?.content;
                     if (!content) {
-                        reject(new Error('Нет content в ответе'));
+                        reject(new Error('Нет content'));
                         return;
                     }
 
                     const imgMatch = content.match(/<img src="([^"]+)"/);
                     if (!imgMatch) {
-                        console.log(`[${requestId}] 📄 Content:`, content.substring(0, 200));
                         reject(new Error('Не найден file_id'));
                         return;
                     }
 
-                    const fileId = imgMatch[1];
-                    console.log(`[${requestId}] ✅ file_id: ${fileId}`);
-                    resolve(fileId);
-                    
+                    resolve(imgMatch[1]);
                 } catch (e) {
                     reject(e);
                 }
@@ -146,17 +116,13 @@ async function generateImage(prompt, token, requestId) {
         });
 
         req.on('error', reject);
-        req.setTimeout(60000, () => {
-            req.destroy();
-            reject(new Error('Таймаут 60 сек'));
-        });
-        
+        req.setTimeout(60000, () => reject(new Error('Таймаут')));
         req.write(requestBody);
         req.end();
     });
 }
 
-// ========== СКАЧИВАНИЕ ==========
+// ========== СКАЧИВАНИЕ ИЗ KANDINSKY ==========
 async function downloadImage(fileId, token, requestId) {
     console.log(`\n[${requestId}] 📥 Скачивание ${fileId}...`);
     
@@ -172,14 +138,9 @@ async function downloadImage(fileId, token, requestId) {
             }
         };
 
-        const reqStart = Date.now();
-        
         const req = https.request(options, (res) => {
-            const elapsed = ((Date.now() - reqStart) / 1000).toFixed(1);
-            console.log(`[${requestId}] 📨 Ответ скачивания: ${res.statusCode} (${elapsed} сек)`);
-            
             if (res.statusCode !== 200) {
-                reject(new Error(`Ошибка скачивания ${res.statusCode}`));
+                reject(new Error(`Ошибка ${res.statusCode}`));
                 return;
             }
             
@@ -188,115 +149,91 @@ async function downloadImage(fileId, token, requestId) {
             res.on('end', () => {
                 const buffer = Buffer.concat(chunks);
                 console.log(`[${requestId}] ✅ Скачано ${(buffer.length/1024).toFixed(1)} KB`);
-                const base64 = buffer.toString('base64');
-                resolve(`data:image/jpeg;base64,${base64}`);
+                resolve(`data:image/jpeg;base64,${buffer.toString('base64')}`);
             });
         });
 
         req.on('error', reject);
-        req.setTimeout(30000, () => reject(new Error('Таймаут скачивания')));
+        req.setTimeout(30000, () => reject(new Error('Таймаут')));
         req.end();
     });
 }
 
-// ========== УЛУЧШЕННЫЙ РЕЗЕРВНЫЙ ГЕНЕРАТОР ==========
-async function fallbackImage(prompt, requestId) {
-    console.log(`\n[${requestId}] 🔄 Резервный генератор - пробуем несколько сервисов...`);
+// ========== ПОЛЛИНАЦИОНС - ИСПРАВЛЕННАЯ ВЕРСИЯ ==========
+async function generatePollinations(prompt, requestId) {
+    console.log(`\n[${requestId}] 🎨 Pollinations: ${prompt.substring(0, 80)}...`);
     
-    // Список резервных сервисов в порядке приоритета
-    const services = [
-        {
-            name: 'Pollinations (прямой URL)',
-            url: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${Date.now()}`,
-            checkSize: true
-        },
-        {
-            name: 'DummyJSON (тестовая заглушка)',
-            url: 'https://picsum.photos/1024/1024',
-            checkSize: false
-        },
-        {
-            name: 'Placeholder Cat',
-            url: 'https://cataas.com/cat/says/' + encodeURIComponent(prompt.substring(0, 30)),
-            checkSize: false
-        }
-    ];
-    
-    for (const service of services) {
-        try {
-            console.log(`[${requestId}] 🎨 Пробуем ${service.name}...`);
+    return new Promise((resolve, reject) => {
+        // Формируем URL с параметрами для получения качественного изображения
+        const encodedPrompt = encodeURIComponent(prompt);
+        const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=flux&nologo=true&seed=${Date.now()}`;
+        
+        console.log(`[${requestId}] 🌐 Запрос к Pollinations...`);
+        
+        const req = https.get(url, (response) => {
+            // Проверяем Content-Type
+            const contentType = response.headers['content-type'] || '';
             
-            const imageData = await new Promise((resolve, reject) => {
-                const protocol = service.url.startsWith('https') ? https : http;
-                const timeout = setTimeout(() => reject(new Error('Таймаут')), 15000);
-                
-                protocol.get(service.url, (response) => {
-                    clearTimeout(timeout);
-                    
-                    // Проверяем Content-Type
-                    const contentType = response.headers['content-type'] || '';
-                    if (!contentType.includes('image/')) {
-                        reject(new Error(`Не image тип: ${contentType}`));
-                        return;
+            if (response.statusCode === 302 || response.statusCode === 301) {
+                // Обрабатываем редирект
+                const location = response.headers.location;
+                if (location) {
+                    console.log(`[${requestId}] 🔄 Редирект на: ${location}`);
+                    https.get(location, (redirectRes) => {
+                        const chunks = [];
+                        redirectRes.on('data', chunk => chunks.push(chunk));
+                        redirectRes.on('end', () => {
+                            const buffer = Buffer.concat(chunks);
+                            if (buffer.length < 1000) {
+                                reject(new Error('Изображение слишком маленькое'));
+                                return;
+                            }
+                            console.log(`[${requestId}] ✅ Pollinations: ${(buffer.length/1024).toFixed(1)} KB`);
+                            resolve(`data:image/jpeg;base64,${buffer.toString('base64')}`);
+                        });
+                    }).on('error', reject);
+                    return;
+                }
+            }
+            
+            if (!contentType.includes('image/')) {
+                // Если пришел JSON - пытаемся распарсить ошибку
+                let data = '';
+                response.on('data', chunk => data += chunk);
+                response.on('end', () => {
+                    try {
+                        const json = JSON.parse(data);
+                        console.error(`[${requestId}] Pollinations ошибка:`, json);
+                        reject(new Error(`Pollinations API error: ${JSON.stringify(json)}`));
+                    } catch (e) {
+                        reject(new Error(`Pollinations вернул ${contentType}, не изображение`));
                     }
-                    
-                    const chunks = [];
-                    response.on('data', chunk => chunks.push(chunk));
-                    response.on('end', () => {
-                        const buffer = Buffer.concat(chunks);
-                        
-                        // Проверяем размер (игнорируем маленькие файлы - возможные ошибки)
-                        if (service.checkSize && buffer.length < 5000) {
-                            reject(new Error(`Слишком маленький файл: ${buffer.length} bytes`));
-                            return;
-                        }
-                        
-                        console.log(`[${requestId}] ✅ ${service.name}: ${(buffer.length/1024).toFixed(1)} KB`);
-                        resolve(buffer.toString('base64'));
-                    });
-                    response.on('error', reject);
-                }).on('error', reject);
+                });
+                return;
+            }
+            
+            const chunks = [];
+            response.on('data', chunk => chunks.push(chunk));
+            response.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                
+                // Проверяем что изображение не пустое
+                if (buffer.length < 1000) {
+                    reject(new Error(`Изображение слишком маленькое (${buffer.length} bytes)`));
+                    return;
+                }
+                
+                console.log(`[${requestId}] ✅ Pollinations: ${(buffer.length/1024).toFixed(1)} KB`);
+                resolve(`data:image/jpeg;base64,${buffer.toString('base64')}`);
             });
-            
-            return `data:image/jpeg;base64,${imageData}`;
-            
-        } catch (error) {
-            console.log(`[${requestId}] ⚠️ ${service.name} не работает: ${error.message}`);
-            continue;
-        }
-    }
-    
-    // Если всё совсем плохо - генерируем SVG с текстом ошибки
-    console.log(`[${requestId}] 🎨 Создаём SVG заглушку с текстом промпта...`);
-    const svgImage = generateSvgFallback(prompt);
-    return svgImage;
-}
-
-// Генерация SVG заглушки с текстом
-function generateSvgFallback(prompt) {
-    const truncatedPrompt = prompt.length > 100 ? prompt.substring(0, 100) + '...' : prompt;
-    const svg = `<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
-        <rect width="800" height="600" fill="#f0f0f0"/>
-        <rect x="100" y="100" width="600" height="400" fill="#e0e0e0" stroke="#999" stroke-width="2"/>
-        <text x="400" y="200" font-family="Arial" font-size="24" fill="#333" text-anchor="middle" font-weight="bold">
-            🎨 Генерация временно недоступна
-        </text>
-        <text x="400" y="250" font-family="Arial" font-size="18" fill="#666" text-anchor="middle">
-            Используются резервные источники
-        </text>
-        <text x="400" y="320" font-family="Arial" font-size="14" fill="#888" text-anchor="middle">
-            Ваш промпт:
-        </text>
-        <text x="400" y="350" font-family="Arial" font-size="13" fill="#666" text-anchor="middle">
-            "${truncatedPrompt}"
-        </text>
-        <text x="400" y="450" font-family="Arial" font-size="12" fill="#aaa" text-anchor="middle">
-            Попробуйте позже или измените промпт
-        </text>
-    </svg>`;
-    
-    const base64 = Buffer.from(svg).toString('base64');
-    return `data:image/svg+xml;base64,${base64}`;
+        });
+        
+        req.on('error', reject);
+        req.setTimeout(30000, () => {
+            req.destroy();
+            reject(new Error('Таймаут Pollinations'));
+        });
+    });
 }
 
 // ========== ОСНОВНОЙ API ==========
@@ -306,7 +243,7 @@ app.post('/api/generate-image', async (req, res) => {
     const startTotal = Date.now();
     
     console.log('\n' + '═'.repeat(60));
-    console.log(`🚀 [${requestId}] НАЧАЛО ЗАПРОСА (${new Date().toLocaleTimeString()})`);
+    console.log(`🚀 [${requestId}] НАЧАЛО (${new Date().toLocaleTimeString()})`);
     console.log('═'.repeat(60));
     
     try {
@@ -319,27 +256,26 @@ app.post('/api/generate-image', async (req, res) => {
         let finalImage;
         let provider = 'Неизвестно';
         
+        // Пробуем сначала Kandinsky
         try {
-            // 🔥 Получаем СВЕЖИЙ токен перед генерацией!
             const token = await getFreshToken(requestId);
-            
-            // Генерация
             const fileId = await generateImage(prompt, token, requestId);
-            
-            // Задержка перед скачиванием
-            console.log(`\n[${requestId}] ⏳ Задержка 3 сек перед скачиванием...`);
             await delay(3000);
-            
-            // Скачивание с ТЕМ ЖЕ токеном
             finalImage = await downloadImage(fileId, token, requestId);
-            provider = 'GigaChat + Kandinsky';
+            provider = 'Kandinsky (GigaChat)';
             
-        } catch (gigaError) {
-            console.log(`\n[${requestId}] ⚠️ GigaChat ошибка: ${gigaError.message}`);
-            console.log(`[${requestId}] 🔄 Переключаемся на резерв...`);
+        } catch (kandinskyError) {
+            console.log(`\n[${requestId}] ⚠️ Kandinsky ошибка: ${kandinskyError.message}`);
+            console.log(`[${requestId}] 🔄 Переключаемся на Pollinations...`);
             
-            finalImage = await fallbackImage(prompt, requestId);
-            provider = 'Резервный (комбинированный)';
+            // Пробуем Pollinations
+            try {
+                finalImage = await generatePollinations(prompt, requestId);
+                provider = 'Pollinations.ai (Flux)';
+            } catch (pollinationsError) {
+                console.log(`[${requestId}] ❌ Pollinations тоже не работает: ${pollinationsError.message}`);
+                throw new Error(`Оба сервиса недоступны: Kandinsky: ${kandinskyError.message}, Pollinations: ${pollinationsError.message}`);
+            }
         }
         
         const totalTime = ((Date.now() - startTotal) / 1000).toFixed(1);
@@ -349,7 +285,7 @@ app.post('/api/generate-image', async (req, res) => {
         res.json({ success: true, image: finalImage, provider });
         
     } catch (error) {
-        console.error(`\n[${requestId}] ❌ КРИТИЧЕСКАЯ ОШИБКА:`, error.message);
+        console.error(`\n[${requestId}] ❌ ОШИБКА:`, error.message);
         console.log('═'.repeat(60) + '\n');
         res.status(500).json({ success: false, error: error.message });
     }
@@ -362,6 +298,6 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
     console.log('═'.repeat(60));
     console.log(`🚀 Сервер: http://localhost:${PORT}`);
-    console.log(`💡 СВЕЖИЙ ТОКЕН для КАЖДОГО запроса`);
+    console.log(`🎨 Сервисы: Kandinsky (основной) → Pollinations (резерв)`);
     console.log('═'.repeat(60));
 });
