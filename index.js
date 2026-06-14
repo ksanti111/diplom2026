@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
+const http = require('http');
 const path = require('path');
 
 const app = express();
@@ -15,12 +16,12 @@ app.use(express.static('public'));
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 let requestCounter = 0;
-let lastRequestTime = 0;
-const MIN_REQUEST_INTERVAL = 5000; // 5 секунд между запросами к Kandinsky
+let lastKandinskyRequest = 0;
+const KANDINSKY_COOLDOWN = 10000; // 10 секунд между запросами
 
 // ========== ПОЛУЧАЕМ СВЕЖИЙ ТОКЕН ==========
 async function getFreshToken(requestId) {
-    console.log(`\n[${requestId}] 🔑 Запрос СВЕЖЕГО токена...`);
+    console.log(`\n[${requestId}] 🔑 Запрос токена...`);
     
     return new Promise((resolve, reject) => {
         const postData = 'scope=GIGACHAT_API_PERS';
@@ -50,7 +51,7 @@ async function getFreshToken(requestId) {
                         console.log(`[${requestId}] ✅ Токен получен`);
                         setTimeout(() => resolve(json.access_token), 2000);
                     } else {
-                        reject(new Error(`OAuth error: ${JSON.stringify(json)}`));
+                        reject(new Error(`OAuth error`));
                     }
                 } catch (e) {
                     reject(e);
@@ -64,282 +65,251 @@ async function getFreshToken(requestId) {
     });
 }
 
-// ========== ГЕНЕРАЦИЯ ЧЕРЕЗ KANDINSKY ==========
-async function generateImage(prompt, token, requestId, retryCount = 0) {
-    console.log(`\n[${requestId}] 🎨 Kandinsky попытка ${retryCount + 1}: ${prompt.substring(0, 80)}...`);
+// ========== KANDINSKY ==========
+async function generateWithKandinsky(prompt, requestId) {
+    console.log(`\n[${requestId}] 🎨 Kandinsky попытка...`);
     
-    // Проверяем интервал между запросами
+    // Проверяем кулдаун
     const now = Date.now();
-    const timeSinceLastRequest = now - lastRequestTime;
-    if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
-        const waitTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
-        console.log(`[${requestId}] ⏳ Ожидание ${waitTime/1000} сек (rate limit)...`);
+    const timeSinceLast = now - lastKandinskyRequest;
+    if (timeSinceLast < KANDINSKY_COOLDOWN) {
+        const waitTime = KANDINSKY_COOLDOWN - timeSinceLast;
+        console.log(`[${requestId}] ⏳ Ожидание ${Math.ceil(waitTime/1000)} сек (cooldown)...`);
         await delay(waitTime);
     }
-    lastRequestTime = Date.now();
+    lastKandinskyRequest = Date.now();
     
-    return new Promise((resolve, reject) => {
-        const requestBody = JSON.stringify({
-            model: 'GigaChat',
-            messages: [{ role: 'user', content: prompt }],
-            function_call: 'auto'
-        });
+    try {
+        const token = await getFreshToken(requestId);
+        
+        // Генерация
+        const fileId = await new Promise((resolve, reject) => {
+            const requestBody = JSON.stringify({
+                model: 'GigaChat',
+                messages: [{ role: 'user', content: prompt }]
+            });
 
+            const options = {
+                hostname: 'gigachat.devices.sberbank.ru',
+                path: '/api/v1/chat/completions',
+                method: 'POST',
+                rejectUnauthorized: false,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    if (res.statusCode === 429) {
+                        reject(new Error('RATE_LIMIT'));
+                        return;
+                    }
+                    if (res.statusCode !== 200) {
+                        reject(new Error(`HTTP ${res.statusCode}`));
+                        return;
+                    }
+                    try {
+                        const json = JSON.parse(data);
+                        const content = json.choices?.[0]?.message?.content;
+                        const imgMatch = content?.match(/<img src="([^"]+)"/);
+                        if (imgMatch) {
+                            resolve(imgMatch[1]);
+                        } else {
+                            reject(new Error('No file_id'));
+                        }
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.write(requestBody);
+            req.end();
+        });
+        
+        await delay(3000);
+        
+        // Скачивание
+        const imageBase64 = await new Promise((resolve, reject) => {
+            const options = {
+                hostname: 'gigachat.devices.sberbank.ru',
+                path: `/api/v1/files/${fileId}/content`,
+                method: 'GET',
+                rejectUnauthorized: false,
+                headers: {
+                    'Accept': 'application/jpg',
+                    'Authorization': `Bearer ${token}`
+                }
+            };
+
+            const req = https.request(options, (res) => {
+                if (res.statusCode !== 200) {
+                    reject(new Error(`Download ${res.statusCode}`));
+                    return;
+                }
+                const chunks = [];
+                res.on('data', chunk => chunks.push(chunk));
+                res.on('end', () => {
+                    const buffer = Buffer.concat(chunks);
+                    resolve(`data:image/jpeg;base64,${buffer.toString('base64')}`);
+                });
+            });
+            req.on('error', reject);
+            req.end();
+        });
+        
+        return { image: imageBase64, provider: 'Kandinsky' };
+        
+    } catch (error) {
+        if (error.message === 'RATE_LIMIT') {
+            console.log(`[${requestId}] ⚠️ Лимит Kandinsky`);
+        } else {
+            console.log(`[${requestId}] ⚠️ Kandinsky ошибка: ${error.message}`);
+        }
+        return null;
+    }
+}
+
+// ========== POLLINATIONS (альтернативный endpoint) ==========
+async function generateWithPollinations(prompt, requestId) {
+    console.log(`\n[${requestId}] 🎨 Pollinations...`);
+    
+    // Используем другой endpoint Pollinations без очереди
+    const endpoints = [
+        `https://pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true`,
+        `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true`,
+        `https://pollinations.ai/prompt/${encodeURIComponent(prompt.substring(0, 200))}?width=1024&height=1024`
+    ];
+    
+    for (const url of endpoints) {
+        try {
+            console.log(`[${requestId}] 🌐 Пробуем: ${url.substring(0, 80)}...`);
+            
+            const imageData = await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Timeout')), 20000);
+                
+                https.get(url, (response) => {
+                    clearTimeout(timeout);
+                    
+                    if (response.statusCode === 200 && response.headers['content-type']?.includes('image')) {
+                        const chunks = [];
+                        response.on('data', chunk => chunks.push(chunk));
+                        response.on('end', () => {
+                            const buffer = Buffer.concat(chunks);
+                            if (buffer.length > 5000) {
+                                resolve(buffer.toString('base64'));
+                            } else {
+                                reject(new Error('Image too small'));
+                            }
+                        });
+                    } else {
+                        reject(new Error(`HTTP ${response.statusCode}`));
+                    }
+                }).on('error', reject);
+            });
+            
+            return { image: `data:image/jpeg;base64,${imageData}`, provider: 'Pollinations' };
+            
+        } catch (error) {
+            console.log(`[${requestId}] ⚠️ Endpoint не работает: ${error.message}`);
+        }
+    }
+    
+    return null;
+}
+
+// ========== PLAYGROUND AI (альтернатива) ==========
+async function generateWithPlayground(prompt, requestId) {
+    console.log(`\n[${requestId}] 🎨 Playground AI...`);
+    
+    return new Promise((resolve) => {
+        // Используем бесплатный API Playground AI
+        const postData = JSON.stringify({
+            prompt: prompt,
+            width: 512,
+            height: 512,
+            num_samples: 1
+        });
+        
         const options = {
-            hostname: 'gigachat.devices.sberbank.ru',
-            path: '/api/v1/chat/completions',
+            hostname: 'api.playgroundai.com',
+            path: '/v1/images/generate',
             method: 'POST',
-            rejectUnauthorized: false,
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'Authorization': `Bearer ${token}`
+                'Authorization': 'Bearer free-api-key-demo'
             }
         };
-
+        
         const req = https.request(options, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                if (res.statusCode === 429) {
-                    if (retryCount < 3) {
-                        console.log(`[${requestId}] ⚠️ 429 ошибка, повтор через ${(retryCount + 1) * 3} сек...`);
-                        setTimeout(() => {
-                            generateImage(prompt, token, requestId, retryCount + 1)
-                                .then(resolve)
-                                .catch(reject);
-                        }, (retryCount + 1) * 3000);
-                    } else {
-                        reject(new Error('Превышен лимит запросов к Kandinsky'));
-                    }
-                    return;
-                }
-                
-                if (res.statusCode !== 200) {
-                    reject(new Error(`HTTP ${res.statusCode}`));
-                    return;
-                }
-                
                 try {
                     const json = JSON.parse(data);
-                    const content = json.choices?.[0]?.message?.content;
-                    if (!content) {
-                        reject(new Error('Нет content'));
-                        return;
+                    if (json.images && json.images[0]) {
+                        resolve({ image: `data:image/png;base64,${json.images[0]}`, provider: 'Playground AI' });
+                    } else {
+                        resolve(null);
                     }
-
-                    const imgMatch = content.match(/<img src="([^"]+)"/);
-                    if (!imgMatch) {
-                        reject(new Error('Не найден file_id'));
-                        return;
-                    }
-
-                    resolve(imgMatch[1]);
                 } catch (e) {
-                    reject(e);
+                    resolve(null);
                 }
             });
         });
-
-        req.on('error', reject);
-        req.setTimeout(60000, () => reject(new Error('Таймаут')));
-        req.write(requestBody);
+        
+        req.on('error', () => resolve(null));
+        req.write(postData);
         req.end();
     });
 }
 
-// ========== СКАЧИВАНИЕ ИЗ KANDINSKY ==========
-async function downloadImage(fileId, token, requestId) {
-    console.log(`\n[${requestId}] 📥 Скачивание ${fileId}...`);
+// ========== ГЕНЕРАЦИЯ СВГ ЗАГЛУШКИ ==========
+function generateSVG(prompt, requestId) {
+    console.log(`\n[${requestId}] 🎨 Создаем SVG с текстом промпта...`);
     
-    return new Promise((resolve, reject) => {
-        const options = {
-            hostname: 'gigachat.devices.sberbank.ru',
-            path: `/api/v1/files/${fileId}/content`,
-            method: 'GET',
-            rejectUnauthorized: false,
-            headers: {
-                'Accept': 'application/jpg',
-                'Authorization': `Bearer ${token}`
-            }
-        };
-
-        const req = https.request(options, (res) => {
-            if (res.statusCode !== 200) {
-                reject(new Error(`Ошибка ${res.statusCode}`));
-                return;
-            }
-            
-            const chunks = [];
-            res.on('data', chunk => chunks.push(chunk));
-            res.on('end', () => {
-                const buffer = Buffer.concat(chunks);
-                console.log(`[${requestId}] ✅ Скачано ${(buffer.length/1024).toFixed(1)} KB`);
-                resolve(`data:image/jpeg;base64,${buffer.toString('base64')}`);
-            });
-        });
-
-        req.on('error', reject);
-        req.setTimeout(30000, () => reject(new Error('Таймаут')));
-        req.end();
-    });
+    const truncatedPrompt = prompt.length > 150 ? prompt.substring(0, 150) + '...' : prompt;
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+    <svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+            </linearGradient>
+        </defs>
+        <rect width="1024" height="1024" fill="url(#grad)"/>
+        <text x="512" y="400" font-family="Arial, sans-serif" font-size="48" fill="white" text-anchor="middle" font-weight="bold">
+            🎨 Генерация изображения
+        </text>
+        <text x="512" y="480" font-family="Arial, sans-serif" font-size="24" fill="#e0e0e0" text-anchor="middle">
+            Сервисы временно недоступны
+        </text>
+        <text x="512" y="560" font-family="Arial, sans-serif" font-size="18" fill="#c0c0c0" text-anchor="middle">
+            Ваш промпт:
+        </text>
+        <text x="512" y="600" font-family="Arial, sans-serif" font-size="16" fill="#d0d0d0" text-anchor="middle">
+            "${truncatedPrompt}"
+        </text>
+    </svg>`;
+    
+    const base64 = Buffer.from(svg).toString('base64');
+    return `data:image/svg+xml;base64,${base64}`;
 }
 
-// ========== ALTERNATIVE FREE IMAGE API (NO RATE LIMIT) ==========
-async function generateAlternativeImage(prompt, requestId) {
-    console.log(`\n[${requestId}] 🎨 Используем резервный API...`);
-    
-    // Используем бесплатный API с высокими лимитами
-    const services = [
-        {
-            name: 'OpenArt API',
-            url: `https://api.openart.ai/api/v1/generate?prompt=${encodeURIComponent(prompt)}`,
-            method: 'GET'
-        },
-        {
-            name: 'Lexica API',
-            url: `https://lexica.art/api/v1/search?q=${encodeURIComponent(prompt)}`,
-            method: 'GET'
-        }
-    ];
-    
-    for (const service of services) {
-        try {
-            console.log(`[${requestId}] 🌐 Пробуем ${service.name}...`);
-            
-            const result = await new Promise((resolve, reject) => {
-                const req = https.get(service.url, (response) => {
-                    let data = '';
-                    response.on('data', chunk => data += chunk);
-                    response.on('end', () => {
-                        try {
-                            const json = JSON.parse(data);
-                            if (json.images && json.images[0] && json.images[0].url) {
-                                resolve(json.images[0].url);
-                            } else if (json.data && json.data[0] && json.data[0].url) {
-                                resolve(json.data[0].url);
-                            } else {
-                                reject(new Error('Нет URL изображения'));
-                            }
-                        } catch (e) {
-                            reject(e);
-                        }
-                    });
-                });
-                req.on('error', reject);
-                req.setTimeout(10000, () => reject(new Error('Таймаут')));
-            });
-            
-            // Скачиваем изображение по полученному URL
-            const imageData = await new Promise((resolve, reject) => {
-                https.get(result, (imgRes) => {
-                    const chunks = [];
-                    imgRes.on('data', chunk => chunks.push(chunk));
-                    imgRes.on('end', () => {
-                        const buffer = Buffer.concat(chunks);
-                        if (buffer.length < 1000) {
-                            reject(new Error('Изображение слишком маленькое'));
-                            return;
-                        }
-                        resolve(`data:image/jpeg;base64,${buffer.toString('base64')}`);
-                    });
-                }).on('error', reject);
-            });
-            
-            console.log(`[${requestId}] ✅ ${service.name} успешно`);
-            return imageData;
-            
-        } catch (error) {
-            console.log(`[${requestId}] ⚠️ ${service.name} ошибка: ${error.message}`);
-        }
-    }
-    
-    throw new Error('Все резервные API недоступны');
-}
-
-// ========== POLLINATIONS С ОЧЕРЕДЬЮ ==========
-class PollinationsQueue {
-    constructor() {
-        this.queue = [];
-        this.isProcessing = false;
-        this.lastRequestTime = 0;
-        this.minDelay = 3000; // 3 секунды между запросами
-    }
-    
-    async add(prompt, requestId) {
-        return new Promise((resolve, reject) => {
-            this.queue.push({ prompt, requestId, resolve, reject });
-            this.process();
-        });
-    }
-    
-    async process() {
-        if (this.isProcessing || this.queue.length === 0) return;
-        
-        this.isProcessing = true;
-        const task = this.queue.shift();
-        
-        try {
-            // Ждем минимальную задержку
-            const now = Date.now();
-            const timeSinceLast = now - this.lastRequestTime;
-            if (timeSinceLast < this.minDelay) {
-                await delay(this.minDelay - timeSinceLast);
-            }
-            
-            const result = await this.makeRequest(task.prompt, task.requestId);
-            this.lastRequestTime = Date.now();
-            task.resolve(result);
-        } catch (error) {
-            task.reject(error);
-        }
-        
-        this.isProcessing = false;
-        this.process();
-    }
-    
-    async makeRequest(prompt, requestId) {
-        console.log(`\n[${requestId}] 🎨 Pollinations (очередь): ${prompt.substring(0, 80)}...`);
-        
-        return new Promise((resolve, reject) => {
-            const encodedPrompt = encodeURIComponent(prompt);
-            // Используем другой endpoint Pollinations
-            const url = `https://pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&model=flux&nologo=true&seed=${Date.now()}`;
-            
-            const req = https.get(url, (response) => {
-                if (response.statusCode === 200) {
-                    const chunks = [];
-                    response.on('data', chunk => chunks.push(chunk));
-                    response.on('end', () => {
-                        const buffer = Buffer.concat(chunks);
-                        if (buffer.length < 1000) {
-                            reject(new Error('Изображение слишком маленькое'));
-                            return;
-                        }
-                        console.log(`[${requestId}] ✅ Pollinations: ${(buffer.length/1024).toFixed(1)} KB`);
-                        resolve(`data:image/jpeg;base64,${buffer.toString('base64')}`);
-                    });
-                } else {
-                    reject(new Error(`HTTP ${response.statusCode}`));
-                }
-            });
-            
-            req.on('error', reject);
-            req.setTimeout(30000, () => reject(new Error('Таймаут')));
-        });
-    }
-}
-
-const pollinationsQueue = new PollinationsQueue();
-
-// ========== ОСНОВНОЙ API ==========
+// ========== ОСНОВНОЙ API С ПОСЛЕДОВАТЕЛЬНЫМИ ПОПЫТКАМИ ==========
 app.post('/api/generate-image', async (req, res) => {
     requestCounter++;
     const requestId = `REQ-${requestCounter.toString().padStart(3, '0')}`;
     const startTotal = Date.now();
     
     console.log('\n' + '═'.repeat(60));
-    console.log(`🚀 [${requestId}] НАЧАЛО (${new Date().toLocaleTimeString()})`);
+    console.log(`🚀 [${requestId}] ЗАПРОС (${new Date().toLocaleTimeString()})`);
+    console.log(`📝 Промпт: ${req.body.prompt?.substring(0, 100)}...`);
     console.log('═'.repeat(60));
     
     try {
@@ -349,46 +319,50 @@ app.post('/api/generate-image', async (req, res) => {
             throw new Error('Промпт не может быть пустым');
         }
         
-        let finalImage;
-        let provider = 'Неизвестно';
+        let result = null;
         
-        // Пробуем Kandinsky с повторами
-        try {
-            const token = await getFreshToken(requestId);
-            const fileId = await generateImage(prompt, token, requestId);
-            await delay(3000);
-            finalImage = await downloadImage(fileId, token, requestId);
-            provider = 'Kandinsky (GigaChat)';
-            
-        } catch (kandinskyError) {
-            console.log(`\n[${requestId}] ⚠️ Kandinsky ошибка: ${kandinskyError.message}`);
-            console.log(`[${requestId}] 🔄 Переключаемся на Pollinations...`);
-            
-            // Пробуем Pollinations с очередью
-            try {
-                finalImage = await pollinationsQueue.add(prompt, requestId);
-                provider = 'Pollinations.ai (с очередью)';
-            } catch (pollinationsError) {
-                console.log(`[${requestId}] ⚠️ Pollinations ошибка: ${pollinationsError.message}`);
-                console.log(`[${requestId}] 🔄 Переключаемся на альтернативный API...`);
-                
-                // Последняя попытка - альтернативный API
-                finalImage = await generateAlternativeImage(prompt, requestId);
-                provider = 'Резервный API';
-            }
+        // 1. Пробуем Kandinsky
+        result = await generateWithKandinsky(prompt, requestId);
+        if (result) {
+            const totalTime = ((Date.now() - startTotal) / 1000).toFixed(1);
+            console.log(`\n[${requestId}] ✅ ${result.provider} за ${totalTime} сек`);
+            return res.json({ success: true, image: result.image, provider: result.provider });
         }
         
-        const totalTime = ((Date.now() - startTotal) / 1000).toFixed(1);
-        console.log(`\n[${requestId}] ✅ ЗАВЕРШЕНО за ${totalTime} сек (${provider})`);
-        console.log('═'.repeat(60) + '\n');
+        // 2. Пробуем Pollinations
+        result = await generateWithPollinations(prompt, requestId);
+        if (result) {
+            const totalTime = ((Date.now() - startTotal) / 1000).toFixed(1);
+            console.log(`\n[${requestId}] ✅ ${result.provider} за ${totalTime} сек`);
+            return res.json({ success: true, image: result.image, provider: result.provider });
+        }
         
-        res.json({ success: true, image: finalImage, provider });
+        // 3. Пробуем Playground AI
+        result = await generateWithPlayground(prompt, requestId);
+        if (result) {
+            const totalTime = ((Date.now() - startTotal) / 1000).toFixed(1);
+            console.log(`\n[${requestId}] ✅ ${result.provider} за ${totalTime} сек`);
+            return res.json({ success: true, image: result.image, provider: result.provider });
+        }
+        
+        // 4. Последний шанс - SVG с текстом
+        console.log(`\n[${requestId}] ⚠️ Все сервисы недоступны, создаем SVG...`);
+        const svgImage = generateSVG(prompt, requestId);
+        const totalTime = ((Date.now() - startTotal) / 1000).toFixed(1);
+        
+        res.json({ 
+            success: true, 
+            image: svgImage, 
+            provider: `SVG заглушка (${totalTime} сек)`,
+            warning: 'Все сервисы временно недоступны, создано тестовое изображение'
+        });
         
     } catch (error) {
         console.error(`\n[${requestId}] ❌ ОШИБКА:`, error.message);
-        console.log('═'.repeat(60) + '\n');
         res.status(500).json({ success: false, error: error.message });
     }
+    
+    console.log('═'.repeat(60) + '\n');
 });
 
 app.get('/', (req, res) => {
@@ -398,9 +372,7 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
     console.log('═'.repeat(60));
     console.log(`🚀 Сервер: http://localhost:${PORT}`);
-    console.log(`⏱️  Интервал между запросами: ${MIN_REQUEST_INTERVAL/1000} сек`);
-    console.log(`🎨 1. Kandinsky (с повторами при 429)`);
-    console.log(`🎨 2. Pollinations (с очередью)`);
-    console.log(`🎨 3. Резервный API`);
+    console.log(`⏱️  Kandinsky кулдаун: ${KANDINSKY_COOLDOWN/1000} сек`);
+    console.log(`🎨 Цепочка: Kandinsky → Pollinations → Playground AI → SVG`);
     console.log('═'.repeat(60));
 });
