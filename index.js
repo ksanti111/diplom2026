@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
+const http = require('http');
 const path = require('path');
 
 const app = express();
@@ -198,25 +199,104 @@ async function downloadImage(fileId, token, requestId) {
     });
 }
 
-// ========== РЕЗЕРВ ==========
+// ========== УЛУЧШЕННЫЙ РЕЗЕРВНЫЙ ГЕНЕРАТОР ==========
 async function fallbackImage(prompt, requestId) {
-    console.log(`\n[${requestId}] 🔄 Резервный генератор Pollinations.ai...`);
+    console.log(`\n[${requestId}] 🔄 Резервный генератор - пробуем несколько сервисов...`);
     
-    return new Promise((resolve, reject) => {
-        const encodedPrompt = encodeURIComponent(prompt.substring(0, 200));
-        const url = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=800&height=600&model=flux&nologo=true`;
-        
-        https.get(url, (response) => {
-            const chunks = [];
-            response.on('data', chunk => chunks.push(chunk));
-            response.on('end', () => {
-                const buffer = Buffer.concat(chunks);
-                console.log(`[${requestId}] ✅ Резерв: ${(buffer.length/1024).toFixed(1)} KB`);
-                const base64 = buffer.toString('base64');
-                resolve(`data:image/jpeg;base64,${base64}`);
+    // Список резервных сервисов в порядке приоритета
+    const services = [
+        {
+            name: 'Pollinations (прямой URL)',
+            url: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true&seed=${Date.now()}`,
+            checkSize: true
+        },
+        {
+            name: 'DummyJSON (тестовая заглушка)',
+            url: 'https://picsum.photos/1024/1024',
+            checkSize: false
+        },
+        {
+            name: 'Placeholder Cat',
+            url: 'https://cataas.com/cat/says/' + encodeURIComponent(prompt.substring(0, 30)),
+            checkSize: false
+        }
+    ];
+    
+    for (const service of services) {
+        try {
+            console.log(`[${requestId}] 🎨 Пробуем ${service.name}...`);
+            
+            const imageData = await new Promise((resolve, reject) => {
+                const protocol = service.url.startsWith('https') ? https : http;
+                const timeout = setTimeout(() => reject(new Error('Таймаут')), 15000);
+                
+                protocol.get(service.url, (response) => {
+                    clearTimeout(timeout);
+                    
+                    // Проверяем Content-Type
+                    const contentType = response.headers['content-type'] || '';
+                    if (!contentType.includes('image/')) {
+                        reject(new Error(`Не image тип: ${contentType}`));
+                        return;
+                    }
+                    
+                    const chunks = [];
+                    response.on('data', chunk => chunks.push(chunk));
+                    response.on('end', () => {
+                        const buffer = Buffer.concat(chunks);
+                        
+                        // Проверяем размер (игнорируем маленькие файлы - возможные ошибки)
+                        if (service.checkSize && buffer.length < 5000) {
+                            reject(new Error(`Слишком маленький файл: ${buffer.length} bytes`));
+                            return;
+                        }
+                        
+                        console.log(`[${requestId}] ✅ ${service.name}: ${(buffer.length/1024).toFixed(1)} KB`);
+                        resolve(buffer.toString('base64'));
+                    });
+                    response.on('error', reject);
+                }).on('error', reject);
             });
-        }).on('error', reject);
-    });
+            
+            return `data:image/jpeg;base64,${imageData}`;
+            
+        } catch (error) {
+            console.log(`[${requestId}] ⚠️ ${service.name} не работает: ${error.message}`);
+            continue;
+        }
+    }
+    
+    // Если всё совсем плохо - генерируем SVG с текстом ошибки
+    console.log(`[${requestId}] 🎨 Создаём SVG заглушку с текстом промпта...`);
+    const svgImage = generateSvgFallback(prompt);
+    return svgImage;
+}
+
+// Генерация SVG заглушки с текстом
+function generateSvgFallback(prompt) {
+    const truncatedPrompt = prompt.length > 100 ? prompt.substring(0, 100) + '...' : prompt;
+    const svg = `<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+        <rect width="800" height="600" fill="#f0f0f0"/>
+        <rect x="100" y="100" width="600" height="400" fill="#e0e0e0" stroke="#999" stroke-width="2"/>
+        <text x="400" y="200" font-family="Arial" font-size="24" fill="#333" text-anchor="middle" font-weight="bold">
+            🎨 Генерация временно недоступна
+        </text>
+        <text x="400" y="250" font-family="Arial" font-size="18" fill="#666" text-anchor="middle">
+            Используются резервные источники
+        </text>
+        <text x="400" y="320" font-family="Arial" font-size="14" fill="#888" text-anchor="middle">
+            Ваш промпт:
+        </text>
+        <text x="400" y="350" font-family="Arial" font-size="13" fill="#666" text-anchor="middle">
+            "${truncatedPrompt}"
+        </text>
+        <text x="400" y="450" font-family="Arial" font-size="12" fill="#aaa" text-anchor="middle">
+            Попробуйте позже или измените промпт
+        </text>
+    </svg>`;
+    
+    const base64 = Buffer.from(svg).toString('base64');
+    return `data:image/svg+xml;base64,${base64}`;
 }
 
 // ========== ОСНОВНОЙ API ==========
@@ -232,11 +312,15 @@ app.post('/api/generate-image', async (req, res) => {
     try {
         const { prompt } = req.body;
         
+        if (!prompt || prompt.trim().length === 0) {
+            throw new Error('Промпт не может быть пустым');
+        }
+        
         let finalImage;
         let provider = 'Неизвестно';
         
         try {
-            // 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: ВСЕГДА получаем СВЕЖИЙ токен перед генерацией!
+            // 🔥 Получаем СВЕЖИЙ токен перед генерацией!
             const token = await getFreshToken(requestId);
             
             // Генерация
@@ -255,7 +339,7 @@ app.post('/api/generate-image', async (req, res) => {
             console.log(`[${requestId}] 🔄 Переключаемся на резерв...`);
             
             finalImage = await fallbackImage(prompt, requestId);
-            provider = 'Резервный (Pollinations.ai)';
+            provider = 'Резервный (комбинированный)';
         }
         
         const totalTime = ((Date.now() - startTotal) / 1000).toFixed(1);
