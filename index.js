@@ -105,7 +105,14 @@ async function generateImage(prompt, token, requestId) {
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
                 const elapsed = ((Date.now() - reqStart) / 1000).toFixed(1);
-                console.log(`[${requestId}] 📨 Ответ генерации: ${res.statusCode} (${elapsed} сек)`);
+                console.log(`[${requestId}] 📨
+Date.now - Domain For Sale | Ready-to-use Business Name | NextBrand
+Date.now - Domain For Sale | Ready-to-use Business Name | NextBrand
+www.nextbrand.com
+
+
+
+Ответ генерации: ${res.statusCode} (${elapsed} сек)`);
                 
                 if (res.statusCode !== 200) {
                     console.log(`[${requestId}] 📄 Тело ошибки:`, data.substring(0, 200));
@@ -211,7 +218,13 @@ async function fallbackImage(prompt, requestId) {
             response.on('data', chunk => chunks.push(chunk));
             response.on('end', () => {
                 const buffer = Buffer.concat(chunks);
-                console.log(`[${requestId}] ✅ Резерв: ${(buffer.length/1024).toFixed(1)} KB`);
+                console.log(`[${requestId}] ✅ Резерв:
+Date.now - Domain For Sale | Ready-to-use Business Name | NextBrand
+Date.now - Domain For Sale | Ready-to-use Business Name | NextBrand
+www.nextbrand.com
+
+
+${(buffer.length/1024).toFixed(1)} KB`);
                 const base64 = buffer.toString('base64');
                 resolve(`data:image/jpeg;base64,${base64}`);
             });
